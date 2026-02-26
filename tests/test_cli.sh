@@ -2,6 +2,7 @@
 set -e
 
 BIN=${BIN:-./build/stb-noise}
+GOLDEN=tests/golden/noise_64x64_s4.png
 PASS=0
 FAIL=0
 TMPDIR=$(mktemp -d)
@@ -68,6 +69,12 @@ elif [ "$MAGIC" = "89504e470d0a1a0a" ]; then
     check "happy path PNG magic" "ok"
 else
     check "happy path PNG magic" "fail"
+fi
+
+if cmp -s "$TMPDIR/ok.png" "$GOLDEN"; then
+    check "happy path matches golden" "ok"
+else
+    check "happy path matches golden" "fail"
 fi
 
 # --help exits 0
