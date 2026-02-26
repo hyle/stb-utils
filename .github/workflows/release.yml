@@ -16,21 +16,24 @@ jobs:
       - name: Install build tools
         run: apk add --no-cache build-base make
 
-      - name: Build static binary
+      - name: Build static binaries
         run: make CC=gcc CFLAGS="-O2 -static -Ivendor/stb -Wall -Wextra"
 
       - name: Verify static
         run: |
           file build/stb-noise
           ! ldd build/stb-noise 2>&1 | grep -q "libc"
+          ! ldd build/stb-atlas 2>&1 | grep -q "libc"
 
       - name: Run tests
         run: make test
 
       - uses: actions/upload-artifact@v4
         with:
-          name: stb-noise-linux-x86_64
-          path: build/stb-noise
+          name: stb-utils-linux-x86_64
+          path: |
+            build/stb-noise
+            build/stb-atlas
 
   build-macos:
     runs-on: macos-latest
@@ -45,8 +48,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: stb-noise-macos-arm64
-          path: build/stb-noise
+          name: stb-utils-macos-arm64
+          path: |
+            build/stb-noise
+            build/stb-atlas
 
   release:
     needs: [build-linux, build-macos]
@@ -59,15 +64,17 @@ jobs:
         with:
           path: artifacts/
 
-      - name: Rename binaries
+      - name: Rename and organize binaries
         run: |
-          mv artifacts/stb-noise-linux-x86_64/stb-noise  artifacts/stb-noise-linux-x86_64-bin
-          mv artifacts/stb-noise-macos-arm64/stb-noise   artifacts/stb-noise-macos-arm64-bin
+          mkdir -p release_binaries
+          mv artifacts/stb-utils-linux-x86_64/stb-noise release_binaries/stb-noise-linux-x86_64
+          mv artifacts/stb-utils-linux-x86_64/stb-atlas release_binaries/stb-atlas-linux-x86_64
+          mv artifacts/stb-utils-macos-arm64/stb-noise release_binaries/stb-noise-macos-arm64
+          mv artifacts/stb-utils-macos-arm64/stb-atlas release_binaries/stb-atlas-macos-arm64
+          chmod +x release_binaries/*
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/stb-noise-linux-x86_64-bin
-            artifacts/stb-noise-macos-arm64-bin
+          files: release_binaries/*
           generate_release_notes: true

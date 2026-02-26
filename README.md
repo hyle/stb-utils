@@ -41,6 +41,61 @@ stb-noise 64x64 2.0 tile.png
 stb-noise 512x512 4.0 fbm.png --octaves 6
 ```
 
+### `stb-atlas`
+
+Generate a font texture atlas from a TrueType font, with glyph UV
+coordinates and metrics output as JSON for use in a game engine or UI renderer.
+
+```sh
+stb-atlas [font.ttf] [size] [output.png]
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `font.ttf` | *(required)* | Path to a TrueType or OpenType font |
+| `size` | `32.0` | Font size in pixels |
+| `output.png` | `atlas.png` | Output atlas image (1-channel grayscale) |
+
+JSON metadata is printed to stdout. Redirect it to a file alongside the PNG.
+
+**Examples:**
+
+```sh
+# Default 32px atlas
+stb-atlas font.ttf
+
+# 16px pixel font, explicit output paths
+stb-atlas fonts/proggy_clean.ttf 16 ui_font.png > ui_font.json
+
+# Large atlas for high-DPI UI
+stb-atlas fonts/inter.ttf 48 hud.png > hud.json
+```
+
+**Output format:**
+
+```json
+{
+  "texture": "ui_font.png",
+  "width": 512,
+  "height": 512,
+  "size": 16.0,
+  "glyphs": {
+    "65": { "char": "A", "x": 14, "y": 0, "w": 8, "h": 13,
+            "xoff": 0.00, "yoff": -12.00, "xadvance": 7.00 }
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `x`, `y` | Top-left pixel coordinate in the atlas texture |
+| `w`, `h` | Glyph bounding box in pixels |
+| `xoff`, `yoff` | Offset from cursor position to glyph top-left (bearing) |
+| `xadvance` | Horizontal advance to move the cursor after drawing |
+
+Covers ASCII 32-126 (space through `~`). The atlas is a single-channel
+PNG; sample it with `r` or replicate to RGB in your shader.
+
 ---
 
 ## Install
@@ -106,8 +161,7 @@ make sanitize     # build with ASan + UBSan for safety checks
 make clean
 ```
 
-Tests live in `tests/test_cli.sh` and validate both safety boundaries
-(overflow, NaN/Inf inputs) and happy-path output.
+Tests live in `tests/test_cli.sh` and `tests/test_atlas.sh`.
 
 stb headers are vendored in `vendor/stb/` at commit
 [`f1c79c0`](https://github.com/nothings/stb/commit/f1c79c02822848a9bed4315b12c8c8f3761e1296).
@@ -117,8 +171,8 @@ stb headers are vendored in `vendor/stb/` at commit
 ## Roadmap
 
 - [x] `stb-noise` FBM mode (`--octaves N`)
+- [x] `stb-atlas` generate font texture atlases from TTF files - outputs JSON metadata to stdout
 - [ ] `stb-img` convert and resize images
-- [ ] `stb-atlas` generate font texture atlases from TTF files
 - [ ] UNIX pipeline mode (`stdin -> stdout`)
 
 ---
