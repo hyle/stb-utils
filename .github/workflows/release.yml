@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.23
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: apk add --no-cache build-base make
+
+      - name: Build static binary
+        run: make CC=gcc CFLAGS="-O2 -static -Ivendor/stb -Wall -Wextra"
+
+      - name: Verify static
+        run: |
+          file build/stb-noise
+          ! ldd build/stb-noise 2>&1 | grep -q "libc"
+
+      - name: Run tests
+        run: make test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stb-noise-linux-x86_64
+          path: build/stb-noise
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build binary
+        run: make
+
+      - name: Run tests
+        run: make test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stb-noise-macos-arm64
+          path: build/stb-noise
+
+  release:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Rename binaries
+        run: |
+          mv artifacts/stb-noise-linux-x86_64/stb-noise  artifacts/stb-noise-linux-x86_64
+          mv artifacts/stb-noise-macos-arm64/stb-noise   artifacts/stb-noise-macos-arm64
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/stb-noise-linux-x86_64
+            artifacts/stb-noise-macos-arm64
+          generate_release_notes: true

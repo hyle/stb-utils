@@ -1,0 +1,8 @@
+FROM alpine:3.23
+
+RUN apk add --no-cache build-base make
+
+WORKDIR /src
+COPY . .
+
+CMD ["sh", "-lc", "make CC=gcc CFLAGS='-O2 -static -Ivendor/stb -Wall -Wextra'"]

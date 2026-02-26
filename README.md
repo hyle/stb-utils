@@ -1,0 +1,129 @@
+# stb-utils
+
+Ultra-fast, zero-dependency command-line tools built entirely on
+[nothings/stb](https://github.com/nothings/stb) single-file public domain libraries.
+
+No libpng. No freetype. No libjpeg. One static binary, runs anywhere.
+
+---
+
+## Tools
+
+### `stb-noise`
+
+Generate Perlin noise images for procedural textures, heightmaps, and
+placeholder assets in automated pipelines.
+
+```sh
+stb-noise [WxH] [scale] [output.png] [--octaves N]
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `WxH` | `512x512` | Output dimensions |
+| `scale` | `4.0` | Noise frequency (higher = finer detail) |
+| `output.png` | `noise.png` | Output file |
+| `--octaves N` | `1` | FBM octaves (`1-32`) |
+
+**Examples:**
+
+```sh
+# Default 512x512, scale 4
+stb-noise
+
+# 256x256 heightmap with fine detail
+stb-noise 256x256 8.0 heightmap.png
+
+# Tiny tiling texture
+stb-noise 64x64 2.0 tile.png
+
+# FBM noise with 6 octaves
+stb-noise 512x512 4.0 fbm.png --octaves 6
+```
+
+---
+
+## Install
+
+### Download a binary
+
+Grab a pre-built static binary from
+[Releases](https://github.com/hyle/stb-utils/releases).
+No runtime dependencies, just download and run.
+
+```sh
+# Linux x86_64
+curl -Lo stb-noise https://github.com/hyle/stb-utils/releases/latest/download/stb-noise-linux-x86_64
+chmod +x stb-noise
+./stb-noise --help
+```
+
+### Build from source
+
+Requires `clang` or `gcc` and `make`.
+
+```sh
+git clone https://github.com/hyle/stb-utils
+cd stb-utils
+make
+./build/stb-noise --help
+```
+
+**Static Linux binary via Docker (Alpine/musl):**
+
+```sh
+docker build -f Dockerfile.build -t stb-utils-builder .
+docker run --rm -v $(pwd)/dist:/src/build stb-utils-builder
+# dist/stb-noise is fully static, ldd reports "not a dynamic executable"
+```
+
+---
+
+## Why
+
+Tools like ImageMagick are powerful but heavy, pulling them into a minimal
+CI/CD container adds hundreds of megabytes and dozens of transitive
+dependencies. `stb-utils` is the opposite: a single small executable that
+does one thing, built on Sean Barrett's single-header libraries.
+
+Designed for:
+- Game dev asset pipelines (procedural textures, atlases)
+- CI/CD containers where `apt install imagemagick` is not an option
+- Shell scripting and UNIX pipelines
+- Anywhere you need image generation with zero install friction
+
+**Format support:** PNG, BMP, TGA, JPEG, HDR (what stb supports, no WebP,
+no AVIF, no TIFF, by design).
+
+---
+
+## Development
+
+```sh
+make              # build (native, dynamic, fast iteration)
+make test         # run test suite
+make sanitize     # build with ASan + UBSan for safety checks
+make clean
+```
+
+Tests live in `tests/test_cli.sh` and validate both safety boundaries
+(overflow, NaN/Inf inputs) and happy-path output.
+
+stb headers are vendored in `vendor/stb/` at commit
+[`f1c79c0`](https://github.com/nothings/stb/commit/f1c79c02822848a9bed4315b12c8c8f3761e1296).
+
+---
+
+## Roadmap
+
+- [x] `stb-noise` FBM mode (`--octaves N`)
+- [ ] `stb-img` convert and resize images
+- [ ] `stb-atlas` generate font texture atlases from TTF files
+- [ ] UNIX pipeline mode (`stdin -> stdout`)
+
+---
+
+## License
+
+MIT. stb headers are public domain (or MIT, at your option),
+see `vendor/stb/` headers for details.

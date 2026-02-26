@@ -1,0 +1,10 @@
+# macOS metadata
+.DS_Store
+
+# Build artifacts
+/build/
+/dist/
+*.o
+
+# Generated output
+/*.png
