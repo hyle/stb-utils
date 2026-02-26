@@ -61,13 +61,13 @@ jobs:
 
       - name: Rename binaries
         run: |
-          mv artifacts/stb-noise-linux-x86_64/stb-noise  artifacts/stb-noise-linux-x86_64
-          mv artifacts/stb-noise-macos-arm64/stb-noise   artifacts/stb-noise-macos-arm64
+          mv artifacts/stb-noise-linux-x86_64/stb-noise  artifacts/stb-noise-linux-x86_64-bin
+          mv artifacts/stb-noise-macos-arm64/stb-noise   artifacts/stb-noise-macos-arm64-bin
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/stb-noise-linux-x86_64
-            artifacts/stb-noise-macos-arm64
+            artifacts/stb-noise-linux-x86_64-bin
+            artifacts/stb-noise-macos-arm64-bin
           generate_release_notes: true
