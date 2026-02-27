@@ -116,6 +116,6 @@ int main(int argc, char **argv) {
         return 1;
     }
     free(img);
-    printf("wrote %s (%dx%d, scale=%.1f, octaves=%d)\n", out, w, h, scale, octaves);
+    fprintf(stderr, "wrote %s (%dx%d, scale=%.1f, octaves=%d)\n", out, w, h, scale, octaves);
     return 0;
 }

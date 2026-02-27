@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,10 +93,15 @@ int main(int argc, char **argv) {
         fclose(font_file);
         return 1;
     }
-    long size = st.st_size;
+    if ((uintmax_t)st.st_size > SIZE_MAX) {
+        fprintf(stderr, "error: font file too large: %s\n", font_path);
+        fclose(font_file);
+        return 1;
+    }
+    size_t size = (size_t)st.st_size;
 
-    unsigned char *ttf_buffer = malloc((size_t)size);
-    if (!ttf_buffer || fread(ttf_buffer, 1, (size_t)size, font_file) != (size_t)size) {
+    unsigned char *ttf_buffer = malloc(size);
+    if (!ttf_buffer || fread(ttf_buffer, 1, size, font_file) != size) {
         fprintf(stderr, "error: failed to read %s\n", font_path);
         if (ttf_buffer) free(ttf_buffer);
         fclose(font_file);
@@ -103,7 +109,7 @@ int main(int argc, char **argv) {
     }
     fclose(font_file);
 
-    if (!has_ttf_signature(ttf_buffer, (size_t)size)) {
+    if (!has_ttf_signature(ttf_buffer, size)) {
         fprintf(stderr, "error: %s is not a valid TTF/OTF font file\n", font_path);
         free(ttf_buffer);
         return 1;
