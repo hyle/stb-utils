@@ -18,20 +18,24 @@ SAN_ALL_LDFLAGS = $(LDFLAGS) $(SAN_LDFLAGS)
 OBJ             := $(BUILD)/stb_impl.o
 NOISE_OBJ       := $(BUILD)/noise_main.o
 ATLAS_OBJ       := $(BUILD)/atlas_main.o
+IMG_OBJ         := $(BUILD)/img_main.o
 
 SAN_OBJ         := $(BUILD)/stb_impl_sanitize.o
 SAN_NOISE_OBJ   := $(BUILD)/noise_main_sanitize.o
 SAN_ATLAS_OBJ   := $(BUILD)/atlas_main_sanitize.o
+SAN_IMG_OBJ     := $(BUILD)/img_main_sanitize.o
 
 BIN_NOISE       := $(BUILD)/stb-noise
 BIN_ATLAS       := $(BUILD)/stb-atlas
+BIN_IMG         := $(BUILD)/stb-img
 SAN_BIN_NOISE   := $(BUILD)/stb-noise-sanitize
 SAN_BIN_ATLAS   := $(BUILD)/stb-atlas-sanitize
+SAN_BIN_IMG     := $(BUILD)/stb-img-sanitize
 
-DEPFILES        := $(OBJ:.o=.d) $(NOISE_OBJ:.o=.d) $(ATLAS_OBJ:.o=.d) \
-                   $(SAN_OBJ:.o=.d) $(SAN_NOISE_OBJ:.o=.d) $(SAN_ATLAS_OBJ:.o=.d)
+DEPFILES        := $(OBJ:.o=.d) $(NOISE_OBJ:.o=.d) $(ATLAS_OBJ:.o=.d) $(IMG_OBJ:.o=.d) \
+                   $(SAN_OBJ:.o=.d) $(SAN_NOISE_OBJ:.o=.d) $(SAN_ATLAS_OBJ:.o=.d) $(SAN_IMG_OBJ:.o=.d)
 
-all: $(BIN_NOISE) $(BIN_ATLAS)
+all: $(BIN_NOISE) $(BIN_ATLAS) $(BIN_IMG)
 
 $(BUILD):
 	mkdir -p $@
@@ -45,10 +49,16 @@ $(NOISE_OBJ): src/noise/main.c | $(BUILD)
 $(ATLAS_OBJ): src/atlas/main.c | $(BUILD)
 	$(CC) $(REL_ALL_CFLAGS) -MMD -MP -c $< -o $@
 
+$(IMG_OBJ): src/img/main.c | $(BUILD)
+	$(CC) $(REL_ALL_CFLAGS) -MMD -MP -c $< -o $@
+
 $(BIN_NOISE): $(NOISE_OBJ) $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BIN_ATLAS): $(ATLAS_OBJ) $(OBJ)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BIN_IMG): $(IMG_OBJ) $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(SAN_OBJ): src/stb_impl.c | $(BUILD)
@@ -60,21 +70,30 @@ $(SAN_NOISE_OBJ): src/noise/main.c | $(BUILD)
 $(SAN_ATLAS_OBJ): src/atlas/main.c | $(BUILD)
 	$(CC) $(SAN_ALL_CFLAGS) -MMD -MP -c $< -o $@
 
+$(SAN_IMG_OBJ): src/img/main.c | $(BUILD)
+	$(CC) $(SAN_ALL_CFLAGS) -MMD -MP -c $< -o $@
+
 $(SAN_BIN_NOISE): $(SAN_NOISE_OBJ) $(SAN_OBJ)
 	$(CC) $(SAN_ALL_LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(SAN_BIN_ATLAS): $(SAN_ATLAS_OBJ) $(SAN_OBJ)
 	$(CC) $(SAN_ALL_LDFLAGS) -o $@ $^ $(LDLIBS)
 
-test: $(BIN_NOISE) $(BIN_ATLAS)
+$(SAN_BIN_IMG): $(SAN_IMG_OBJ) $(SAN_OBJ)
+	$(CC) $(SAN_ALL_LDFLAGS) -o $@ $^ $(LDLIBS)
+
+test: $(BIN_NOISE) $(BIN_ATLAS) $(BIN_IMG)
 	BIN=$(BIN_NOISE) sh tests/test_cli.sh
 	BIN=$(BIN_ATLAS) sh tests/test_atlas.sh
+	BIN=$(BIN_IMG) NOISE_BIN=$(BIN_NOISE) sh tests/test_img.sh
 
-sanitize: $(SAN_BIN_NOISE) $(SAN_BIN_ATLAS)
+sanitize: $(SAN_BIN_NOISE) $(SAN_BIN_ATLAS) $(SAN_BIN_IMG)
 	ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
 		BIN=$(SAN_BIN_NOISE) sh tests/test_cli.sh
 	ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
 		BIN=$(SAN_BIN_ATLAS) sh tests/test_atlas.sh
+	ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
+		BIN=$(SAN_BIN_IMG) NOISE_BIN=$(SAN_BIN_NOISE) SKIP_RESIZE_TEST=1 sh tests/test_img.sh
 
 clean:
 	rm -rf $(BUILD)
