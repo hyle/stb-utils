@@ -96,6 +96,38 @@ stb-atlas fonts/inter.ttf 48 hud.png > hud.json
 Covers ASCII 32-126 (space through `~`). The atlas is a single-channel
 PNG; sample it with `r` or replicate to RGB in your shader.
 
+### `stb-img`
+
+Convert images between stb-supported input formats and optionally resize them.
+
+```sh
+stb-img [input] [output] [--resize WxH]
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `input` | *(required)* | Source image |
+| `output` | *(required)* | Destination image (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.tga`) |
+| `--resize WxH` | none | Resize before writing |
+
+**Examples:**
+
+```sh
+# Convert PNG to JPEG
+stb-img input.png output.jpg
+
+# Resize while converting
+stb-img input.png thumb.png --resize 128x128
+
+# Convert JPG to BMP without resizing
+stb-img input.jpg output.bmp
+```
+
+Notes:
+- input decoding uses `stb_image`
+- JPEG output drops alpha, because JPEG has no alpha channel
+- output format is inferred from the output filename extension
+
 ---
 
 ## Install
@@ -115,13 +147,15 @@ chmod +x stb-noise
 
 ### Build from source
 
-Requires a C99 compiler and `make`.
+Requires a C99 compiler (`cc`, `gcc`, or `clang`) and `make`.
 
 ```sh
 git clone https://github.com/hyle/stb-utils
 cd stb-utils
 make
 ./build/stb-noise --help
+./build/stb-atlas --help
+./build/stb-img --help
 ```
 
 **Static Linux binary via Docker (Alpine/musl):**
@@ -129,7 +163,7 @@ make
 ```sh
 docker build -f Dockerfile.build -t stb-utils-builder .
 docker run --rm -v $(pwd)/dist:/src/build stb-utils-builder
-# dist/stb-noise is fully static, ldd reports "not a dynamic executable"
+# dist/* are fully static, ldd reports "not a dynamic executable"
 ```
 
 ---
@@ -142,13 +176,13 @@ dependencies. `stb-utils` is the opposite: a single small executable that
 does one thing, built on Sean Barrett's single-header libraries.
 
 Designed for:
-- Game dev asset pipelines (procedural textures, atlases)
+- Game dev asset pipelines (procedural textures, atlases, simple image conversion)
 - CI/CD containers where `apt install imagemagick` is not an option
 - Shell scripting and UNIX pipelines
 - Anywhere you need image generation with zero install friction
 
-**Format support:** PNG, BMP, TGA, JPEG, HDR (what stb supports, no WebP,
-no AVIF, no TIFF, by design).
+**Format support:** input formats follow what `stb_image` can decode; output
+formats are PNG, BMP, TGA, and JPEG. No WebP, no AVIF, no TIFF, by design.
 
 ---
 
@@ -161,7 +195,7 @@ make sanitize     # build with ASan + UBSan for safety checks
 make clean
 ```
 
-Tests live in `tests/test_cli.sh` and `tests/test_atlas.sh`.
+Tests live in `tests/test_cli.sh`, `tests/test_atlas.sh`, and `tests/test_img.sh`.
 
 stb headers are vendored in `vendor/stb/` at commit
 [`f1c79c0`](https://github.com/nothings/stb/commit/f1c79c02822848a9bed4315b12c8c8f3761e1296).
@@ -172,7 +206,7 @@ stb headers are vendored in `vendor/stb/` at commit
 
 - [x] `stb-noise` FBM mode (`--octaves N`)
 - [x] `stb-atlas` generate font texture atlases from TTF files - outputs JSON metadata to stdout
-- [ ] `stb-img` convert and resize images
+- [x] `stb-img` convert and resize images
 - [ ] UNIX pipeline mode (`stdin -> stdout`)
 
 ---
