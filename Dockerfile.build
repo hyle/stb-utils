@@ -5,4 +5,4 @@ RUN apk add --no-cache build-base make
 WORKDIR /src
 COPY . .
 
-CMD ["sh", "-lc", "make clean all CC=gcc CFLAGS='-O2' LDFLAGS='-static'"]
+CMD ["sh", "-lc", "make clean all CC=gcc CFLAGS='-O2 -fno-pie' LDFLAGS='-static -no-pie'"]
