@@ -115,7 +115,7 @@ chmod +x stb-noise
 
 ### Build from source
 
-Requires `clang` or `gcc` and `make`.
+Requires a C99 compiler and `make`.
 
 ```sh
 git clone https://github.com/hyle/stb-utils

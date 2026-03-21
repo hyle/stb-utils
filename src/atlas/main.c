@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include "stb_image_write.h"
 #include "stb_rect_pack.h"
 #include "stb_truetype.h"
@@ -80,25 +78,36 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Read TTF file into memory using robust POSIX fstat
+    // Read the font file into memory using standard C I/O only.
     FILE *font_file = fopen(font_path, "rb");
     if (!font_file) {
         fprintf(stderr, "error: failed to open %s\n", font_path);
         return 1;
     }
 
-    struct stat st;
-    if (fstat(fileno(font_file), &st) != 0 || st.st_size <= 0) {
+    if (fseek(font_file, 0, SEEK_END) != 0) {
         fprintf(stderr, "error: cannot determine size of %s\n", font_path);
         fclose(font_file);
         return 1;
     }
-    if ((uintmax_t)st.st_size > SIZE_MAX) {
+
+    long file_size = ftell(font_file);
+    if (file_size <= 0) {
+        fprintf(stderr, "error: cannot determine size of %s\n", font_path);
+        fclose(font_file);
+        return 1;
+    }
+    if ((uintmax_t)file_size > SIZE_MAX) {
         fprintf(stderr, "error: font file too large: %s\n", font_path);
         fclose(font_file);
         return 1;
     }
-    size_t size = (size_t)st.st_size;
+    if (fseek(font_file, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "error: failed to rewind %s\n", font_path);
+        fclose(font_file);
+        return 1;
+    }
+    size_t size = (size_t)file_size;
 
     unsigned char *ttf_buffer = malloc(size);
     if (!ttf_buffer || fread(ttf_buffer, 1, size, font_file) != size) {
