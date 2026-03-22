@@ -93,7 +93,7 @@ sanitize: $(SAN_BIN_NOISE) $(SAN_BIN_ATLAS) $(SAN_BIN_IMG)
 	ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
 		BIN=$(SAN_BIN_ATLAS) sh tests/test_atlas.sh
 	ASAN_OPTIONS=abort_on_error=1:detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
-		BIN=$(SAN_BIN_IMG) NOISE_BIN=$(SAN_BIN_NOISE) SKIP_RESIZE_TEST=1 sh tests/test_img.sh
+		BIN=$(SAN_BIN_IMG) NOISE_BIN=$(SAN_BIN_NOISE) sh tests/test_img.sh
 
 clean:
 	rm -rf $(BUILD)
