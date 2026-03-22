@@ -29,7 +29,7 @@ check_error() {
     code=$?
     set -e
 
-    if [ "$code" -ne 0 ] && [ "$code" -lt 128 ] && echo "$stderr" | grep -qF "$expected_msg"; then
+    if [ "$code" -ne 0 ] && [ "$code" -lt 128 ] && echo "$stderr" | grep -qF -- "$expected_msg"; then
         check "$label" "ok"
     else
         echo "FAIL: $label (exit=$code, stderr='$stderr')"
@@ -57,6 +57,8 @@ $NOISE_BIN 40x30 4.0 "$TMPDIR/source.png" >/dev/null
 $BIN --help >/dev/null 2>&1 && check "--help exits 0" "ok" || check "--help exits 0" "fail"
 check_error "missing args rejected" "missing input or output path" $BIN
 check_error "bad resize rejected" "invalid --resize value" $BIN "$TMPDIR/source.png" "$TMPDIR/bad.png" --resize nope
+check_error "bad filter rejected" "invalid --filter value" $BIN "$TMPDIR/source.png" "$TMPDIR/bad.png" --resize 16x12 --filter nope
+check_error "filter without resize rejected" "--filter requires --resize" $BIN "$TMPDIR/source.png" "$TMPDIR/out.png" --filter mitchell
 check_error "bad extension rejected" "unsupported output format" $BIN "$TMPDIR/source.png" "$TMPDIR/out.webp"
 
 $BIN "$TMPDIR/source.png" "$TMPDIR/out.bmp" >/dev/null
@@ -69,6 +71,12 @@ if [ "$SKIP_RESIZE_TEST" -eq 0 ]; then
     PNG_DIMS=$(hex_bytes "$TMPDIR/resized.png" 16 8 || true)
     [ "$PNG_MAGIC" = "89504e470d0a1a0a" ] && check "resized png magic" "ok" || check "resized png magic" "fail"
     [ "$PNG_DIMS" = "000000100000000c" ] && check "resize dimensions encoded" "ok" || check "resize dimensions encoded" "fail"
+
+    $BIN "$TMPDIR/source.png" "$TMPDIR/filter-point.png" --resize 9x7 --filter point >/dev/null
+    FILTER_MAGIC=$(hex_bytes "$TMPDIR/filter-point.png" 0 8 || true)
+    FILTER_DIMS=$(hex_bytes "$TMPDIR/filter-point.png" 16 8 || true)
+    [ "$FILTER_MAGIC" = "89504e470d0a1a0a" ] && check "filtered resize png magic" "ok" || check "filtered resize png magic" "fail"
+    [ "$FILTER_DIMS" = "0000000900000007" ] && check "filtered resize dimensions encoded" "ok" || check "filtered resize dimensions encoded" "fail"
 else
     echo "SKIP: resize path not exercised in this run"
 fi

@@ -101,7 +101,7 @@ PNG; sample it with `r` or replicate to RGB in your shader.
 Convert images between stb-supported input formats and optionally resize them.
 
 ```sh
-stb-img [input] [output] [--resize WxH]
+stb-img [input] [output] [--resize WxH] [--filter name]
 ```
 
 | Argument | Default | Description |
@@ -109,6 +109,7 @@ stb-img [input] [output] [--resize WxH]
 | `input` | *(required)* | Source image |
 | `output` | *(required)* | Destination image (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.tga`) |
 | `--resize WxH` | none | Resize before writing |
+| `--filter name` | `default` | Resize filter: `default`, `point`, `triangle`, `mitchell`, `catmullrom`, `box`, `cubicbspline` |
 
 **Examples:**
 
@@ -119,12 +120,13 @@ stb-img input.png output.jpg
 # Resize while converting
 stb-img input.png thumb.png --resize 128x128
 
-# Convert JPG to BMP without resizing
-stb-img input.jpg output.bmp
-```
+# Resize with an explicit resampling filter
+stb-img input.png thumb.png --resize 128x128 --filter mitchell
 
 Notes:
 - input decoding uses `stb_image`
+- `--filter` applies a single resize filter regardless of scale direction
+- `--filter` requires `--resize`
 - JPEG output drops alpha, because JPEG has no alpha channel
 - output format is inferred from the output filename extension
 
