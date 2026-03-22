@@ -1,6 +1,6 @@
 # stb-utils
 
-Ultra-fast, zero-dependency command-line tools built entirely on
+Fast, zero-dependency command-line tools built entirely on
 [nothings/stb](https://github.com/nothings/stb) single-file public domain libraries.
 
 No libpng. No freetype. No libjpeg. One static binary.
