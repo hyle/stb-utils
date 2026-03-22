@@ -233,36 +233,125 @@ static int resize_image_point(const unsigned char *src, int src_w, int src_h, in
     return 1;
 }
 
-static void resample_row(const unsigned char *src_row, int src_w, int comp,
-                         int alpha_index, int dst_w, resize_filter_kind filter,
-                         double *tmp_row) {
-    double scale = (double)dst_w / (double)src_w;
-    double stretch = scale < 1.0 ? 1.0 / scale : 1.0;
-    double support = filter_support(filter) * stretch;
+typedef struct resize_tap_set {
+    int start;
+    int count;
+    double *weights;
+} resize_tap_set;
+
+typedef struct resize_row_cache_entry {
+    int src_y;
+    double *values;
+} resize_row_cache_entry;
+
+static int build_filter_taps(int src_size, int dst_size, resize_filter_kind filter,
+                             resize_tap_set **taps_out, double **weights_out,
+                             int *max_count_out) {
+    resize_tap_set *taps = NULL;
+    double *weights = NULL;
+    double scale;
+    double stretch;
+    double support;
+    int max_count;
+    size_t total_slots;
+    int dst_index;
+
+    if (!taps_out || !weights_out || !max_count_out || src_size <= 0 || dst_size <= 0) {
+        return 0;
+    }
+
+    scale = (double)dst_size / (double)src_size;
+    stretch = scale < 1.0 ? 1.0 / scale : 1.0;
+    support = filter_support(filter) * stretch;
+    max_count = (int)ceil(2.0 * support) + 2;
+    if (max_count < 1) {
+        max_count = 1;
+    }
+
+    taps = calloc((size_t)dst_size, sizeof(*taps));
+    if (!taps) {
+        return 0;
+    }
+
+    if ((size_t)dst_size > SIZE_MAX / (size_t)max_count) {
+        free(taps);
+        return 0;
+    }
+    total_slots = (size_t)dst_size * (size_t)max_count;
+    if (total_slots > SIZE_MAX / sizeof(*weights)) {
+        free(taps);
+        return 0;
+    }
+    weights = malloc(total_slots * sizeof(*weights));
+    if (!weights) {
+        free(taps);
+        return 0;
+    }
+
+    for (dst_index = 0; dst_index < dst_size; dst_index++) {
+        double center = sample_center(dst_index, src_size, dst_size);
+        int start_index = clamp_int((int)ceil(center - support), 0, src_size - 1);
+        int end_index = clamp_int((int)floor(center + support), 0, src_size - 1);
+        int count = end_index - start_index + 1;
+        double total = 0.0;
+        int tap_index;
+
+        taps[dst_index].start = start_index;
+        taps[dst_index].count = count;
+        taps[dst_index].weights = weights + (size_t)dst_index * (size_t)max_count;
+
+        if (count <= 0) {
+            int nearest = clamp_int((int)floor(center + 0.5), 0, src_size - 1);
+            taps[dst_index].start = nearest;
+            taps[dst_index].count = 1;
+            taps[dst_index].weights[0] = 1.0;
+            continue;
+        }
+
+        for (tap_index = 0; tap_index < count; tap_index++) {
+            double weight = filter_weight(filter, (center - (double)(start_index + tap_index)) / stretch) / stretch;
+            taps[dst_index].weights[tap_index] = weight;
+            total += weight;
+        }
+
+        if (total == 0.0) {
+            int nearest = clamp_int((int)floor(center + 0.5), 0, src_size - 1);
+            taps[dst_index].start = nearest;
+            taps[dst_index].count = 1;
+            taps[dst_index].weights[0] = 1.0;
+            continue;
+        }
+
+        for (tap_index = 0; tap_index < count; tap_index++) {
+            taps[dst_index].weights[tap_index] /= total;
+        }
+    }
+
+    *taps_out = taps;
+    *weights_out = weights;
+    *max_count_out = max_count;
+    return 1;
+}
+
+static void resample_row_with_taps(const unsigned char *src_row, int comp, int alpha_index,
+                                   int dst_w, const resize_tap_set *x_taps,
+                                   double *tmp_row) {
     int x;
 
     for (x = 0; x < dst_w; x++) {
-        double center = sample_center(x, src_w, dst_w);
-        int start = clamp_int((int)ceil(center - support), 0, src_w - 1);
-        int end = clamp_int((int)floor(center + support), 0, src_w - 1);
-        double total = 0.0;
+        const resize_tap_set *tap = &x_taps[x];
         size_t base = (size_t)x * (size_t)comp;
         int c;
-        int sx;
+        int tap_index;
 
         for (c = 0; c < comp; c++) {
             tmp_row[base + (size_t)c] = 0.0;
         }
 
-        for (sx = start; sx <= end; sx++) {
-            double weight = filter_weight(filter, (center - (double)sx) / stretch) / stretch;
-            const unsigned char *p;
+        for (tap_index = 0; tap_index < tap->count; tap_index++) {
+            double weight = tap->weights[tap_index];
+            const unsigned char *p = src_row + (size_t)(tap->start + tap_index) * (size_t)comp;
 
-            if (weight == 0.0) {
-                continue;
-            }
-            total += weight;
-            p = src_row + (size_t)sx * (size_t)comp;
             if (alpha_index >= 0) {
                 double alpha = (double)p[alpha_index];
                 for (c = 0; c < alpha_index; c++) {
@@ -275,28 +364,29 @@ static void resample_row(const unsigned char *src_row, int src_w, int comp,
                 }
             }
         }
+    }
+}
 
-        if (total != 0.0) {
-            for (c = 0; c < comp; c++) {
-                tmp_row[base + (size_t)c] /= total;
-            }
-        } else {
-            int src_x = clamp_int((int)floor(center + 0.5), 0, src_w - 1);
-            const unsigned char *p = src_row + (size_t)src_x * (size_t)comp;
+static const double *get_cached_resampled_row(const unsigned char *src, int src_w, int comp,
+                                              int alpha_index, int dst_w,
+                                              const resize_tap_set *x_taps, int src_y,
+                                              resize_row_cache_entry *cache, int cache_size,
+                                              int *next_slot) {
+    int cache_index;
+    resize_row_cache_entry *entry;
 
-            if (alpha_index >= 0) {
-                double alpha = (double)p[alpha_index];
-                for (c = 0; c < alpha_index; c++) {
-                    tmp_row[base + (size_t)c] = (double)p[c] * alpha;
-                }
-                tmp_row[base + (size_t)alpha_index] = alpha;
-            } else {
-                for (c = 0; c < comp; c++) {
-                    tmp_row[base + (size_t)c] = (double)p[c];
-                }
-            }
+    for (cache_index = 0; cache_index < cache_size; cache_index++) {
+        if (cache[cache_index].src_y == src_y) {
+            return cache[cache_index].values;
         }
     }
+
+    entry = &cache[*next_slot];
+    entry->src_y = src_y;
+    resample_row_with_taps(src + (size_t)src_y * (size_t)src_w * (size_t)comp,
+                           comp, alpha_index, dst_w, x_taps, entry->values);
+    *next_slot = (*next_slot + 1) % cache_size;
+    return entry->values;
 }
 
 static int resize_image_filtered(const unsigned char *src, int src_w, int src_h, int comp,
@@ -304,12 +394,17 @@ static int resize_image_filtered(const unsigned char *src, int src_w, int src_h,
                                  resize_filter_kind filter) {
     int alpha_index = (comp == 2 || comp == 4) ? comp - 1 : -1;
     size_t tmp_len;
-    double *tmp_row = NULL;
     double *accum_row = NULL;
-    double scale_y;
-    double stretch_y;
-    double support_y;
+    resize_tap_set *x_taps = NULL;
+    resize_tap_set *y_taps = NULL;
+    double *x_weights = NULL;
+    double *y_weights = NULL;
+    resize_row_cache_entry *cache = NULL;
+    int cache_size = 0;
+    int max_y_taps = 0;
+    int next_slot = 0;
     int y;
+    int ok = 0;
 
     if (!src || !dst || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) {
         return 0;
@@ -324,55 +419,56 @@ static int resize_image_filtered(const unsigned char *src, int src_w, int src_h,
         filter = RESIZE_FILTER_TRIANGLE;
     }
 
-    tmp_len = (size_t)dst_w * (size_t)comp;
-    if (tmp_len == 0 || tmp_len > SIZE_MAX / sizeof(double)) {
-        return 0;
+    if (!build_filter_taps(src_w, dst_w, filter, &x_taps, &x_weights, &cache_size)) {
+        goto cleanup;
     }
-    tmp_row = malloc(tmp_len * sizeof(double));
-    accum_row = malloc(tmp_len * sizeof(double));
-    if (!tmp_row || !accum_row) {
-        free(tmp_row);
-        free(accum_row);
-        return 0;
+    if (!build_filter_taps(src_h, dst_h, filter, &y_taps, &y_weights, &max_y_taps)) {
+        goto cleanup;
     }
 
-    scale_y = (double)dst_h / (double)src_h;
-    stretch_y = scale_y < 1.0 ? 1.0 / scale_y : 1.0;
-    support_y = filter_support(filter) * stretch_y;
+    tmp_len = (size_t)dst_w * (size_t)comp;
+    if (tmp_len == 0 || tmp_len > SIZE_MAX / sizeof(*accum_row)) {
+        goto cleanup;
+    }
+    accum_row = malloc(tmp_len * sizeof(*accum_row));
+    if (!accum_row) {
+        goto cleanup;
+    }
+
+    if (max_y_taps > cache_size) {
+        cache_size = max_y_taps;
+    }
+    if (cache_size < 1) {
+        cache_size = 1;
+    }
+    cache = calloc((size_t)cache_size, sizeof(*cache));
+    if (!cache) {
+        goto cleanup;
+    }
+    for (y = 0; y < cache_size; y++) {
+        cache[y].src_y = -1;
+        cache[y].values = malloc(tmp_len * sizeof(*cache[y].values));
+        if (!cache[y].values) {
+            goto cleanup;
+        }
+    }
 
     for (y = 0; y < dst_h; y++) {
-        double center_y = sample_center(y, src_h, dst_h);
-        int start_y = clamp_int((int)ceil(center_y - support_y), 0, src_h - 1);
-        int end_y = clamp_int((int)floor(center_y + support_y), 0, src_h - 1);
-        double total_y = 0.0;
+        const resize_tap_set *y_tap = &y_taps[y];
         size_t x;
-        int sy;
+        int tap_index;
 
-        for (x = 0; x < tmp_len; x++) {
-            accum_row[x] = 0.0;
-        }
+        memset(accum_row, 0, tmp_len * sizeof(*accum_row));
 
-        for (sy = start_y; sy <= end_y; sy++) {
-            double weight_y = filter_weight(filter, (center_y - (double)sy) / stretch_y) / stretch_y;
-            const unsigned char *src_row;
-
-            if (weight_y == 0.0) {
-                continue;
-            }
-            total_y += weight_y;
-            src_row = src + (size_t)sy * (size_t)src_w * (size_t)comp;
-            resample_row(src_row, src_w, comp, alpha_index, dst_w, filter, tmp_row);
+        for (tap_index = 0; tap_index < y_tap->count; tap_index++) {
+            int src_y_index = y_tap->start + tap_index;
+            double weight_y = y_tap->weights[tap_index];
+            const double *row = get_cached_resampled_row(src, src_w, comp, alpha_index,
+                                                         dst_w, x_taps, src_y_index,
+                                                         cache, cache_size, &next_slot);
             for (x = 0; x < tmp_len; x++) {
-                accum_row[x] += tmp_row[x] * weight_y;
+                accum_row[x] += row[x] * weight_y;
             }
-        }
-
-        if (total_y == 0.0) {
-            int nearest_y = clamp_int((int)floor(center_y + 0.5), 0, src_h - 1);
-            const unsigned char *src_row = src + (size_t)nearest_y * (size_t)src_w * (size_t)comp;
-            resample_row(src_row, src_w, comp, alpha_index, dst_w, filter, tmp_row);
-            memcpy(accum_row, tmp_row, tmp_len * sizeof(double));
-            total_y = 1.0;
         }
 
         for (x = 0; x < (size_t)dst_w; x++) {
@@ -381,10 +477,10 @@ static int resize_image_filtered(const unsigned char *src, int src_w, int src_h,
             int c;
 
             if (alpha_index >= 0) {
-                double alpha = accum_row[base + (size_t)alpha_index] / total_y;
+                double alpha = accum_row[base + (size_t)alpha_index];
                 if (alpha > 0.0) {
                     for (c = 0; c < alpha_index; c++) {
-                        out[c] = round_to_u8((accum_row[base + (size_t)c] / total_y) / alpha);
+                        out[c] = round_to_u8(accum_row[base + (size_t)c] / alpha);
                     }
                 } else {
                     for (c = 0; c < alpha_index; c++) {
@@ -394,15 +490,27 @@ static int resize_image_filtered(const unsigned char *src, int src_w, int src_h,
                 out[alpha_index] = round_to_u8(alpha);
             } else {
                 for (c = 0; c < comp; c++) {
-                    out[c] = round_to_u8(accum_row[base + (size_t)c] / total_y);
+                    out[c] = round_to_u8(accum_row[base + (size_t)c]);
                 }
             }
         }
     }
 
-    free(tmp_row);
+    ok = 1;
+
+cleanup:
+    if (cache) {
+        for (y = 0; y < cache_size; y++) {
+            free(cache[y].values);
+        }
+    }
+    free(cache);
     free(accum_row);
-    return 1;
+    free(x_taps);
+    free(y_taps);
+    free(x_weights);
+    free(y_weights);
+    return ok;
 }
 
 static int write_jpeg(const char *path, int w, int h, int comp, const unsigned char *data) {

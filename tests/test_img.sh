@@ -85,6 +85,14 @@ if [ "$SKIP_RESIZE_TEST" -eq 0 ]; then
     else
         check "point and triangle filters differ" "ok"
     fi
+
+    printf '\000\000\002\000\000\000\000\000\000\000\000\000\002\000\002\000\040\050' > "$TMPDIR/rgba.tga"
+    printf '\000\000\377\377\000\377\000\200\377\000\000\100\377\377\377\000' >> "$TMPDIR/rgba.tga"
+    $BIN "$TMPDIR/rgba.tga" "$TMPDIR/rgba-resized.png" --resize 3x5 --filter triangle >/dev/null
+    RGBA_MAGIC=$(hex_bytes "$TMPDIR/rgba-resized.png" 0 8 || true)
+    RGBA_DIMS=$(hex_bytes "$TMPDIR/rgba-resized.png" 16 8 || true)
+    [ "$RGBA_MAGIC" = "89504e470d0a1a0a" ] && check "rgba resize png magic" "ok" || check "rgba resize png magic" "fail"
+    [ "$RGBA_DIMS" = "0000000300000005" ] && check "rgba resize dimensions encoded" "ok" || check "rgba resize dimensions encoded" "fail"
 else
     echo "SKIP: resize path not exercised in this run"
 fi
