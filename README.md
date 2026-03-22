@@ -122,6 +122,7 @@ stb-img input.png thumb.png --resize 128x128
 
 # Resize with an explicit resampling filter
 stb-img input.png thumb.png --resize 128x128 --filter mitchell
+```
 
 Notes:
 - input decoding uses `stb_image`

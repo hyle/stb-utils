@@ -157,19 +157,114 @@ static int validate_sfnt_font(const unsigned char *buf, size_t len) {
     return 0;
 }
 
+static int is_utf8_continuation(unsigned char c) {
+    return (c & 0xc0u) == 0x80u;
+}
+
+static size_t valid_utf8_sequence_length(const unsigned char *s) {
+    unsigned char c0 = s[0];
+
+    if (c0 < 0x80u) return 1u;
+
+    if (c0 >= 0xc2u && c0 <= 0xdfu) {
+        if (s[1] != '\0' && is_utf8_continuation(s[1])) return 2u;
+        return 0u;
+    }
+
+    if (c0 == 0xe0u) {
+        if (s[1] >= 0xa0u && s[1] <= 0xbfu && s[2] != '\0' && is_utf8_continuation(s[2])) return 3u;
+        return 0u;
+    }
+    if (c0 >= 0xe1u && c0 <= 0xecu) {
+        if (s[1] != '\0' && is_utf8_continuation(s[1]) && s[2] != '\0' && is_utf8_continuation(s[2])) return 3u;
+        return 0u;
+    }
+    if (c0 == 0xedu) {
+        if (s[1] >= 0x80u && s[1] <= 0x9fu && s[2] != '\0' && is_utf8_continuation(s[2])) return 3u;
+        return 0u;
+    }
+    if (c0 >= 0xeeu && c0 <= 0xefu) {
+        if (s[1] != '\0' && is_utf8_continuation(s[1]) && s[2] != '\0' && is_utf8_continuation(s[2])) return 3u;
+        return 0u;
+    }
+
+    if (c0 == 0xf0u) {
+        if (s[1] >= 0x90u && s[1] <= 0xbfu && s[2] != '\0' && is_utf8_continuation(s[2]) &&
+            s[3] != '\0' && is_utf8_continuation(s[3])) return 4u;
+        return 0u;
+    }
+    if (c0 >= 0xf1u && c0 <= 0xf3u) {
+        if (s[1] != '\0' && is_utf8_continuation(s[1]) && s[2] != '\0' && is_utf8_continuation(s[2]) &&
+            s[3] != '\0' && is_utf8_continuation(s[3])) return 4u;
+        return 0u;
+    }
+    if (c0 == 0xf4u) {
+        if (s[1] >= 0x80u && s[1] <= 0x8fu && s[2] != '\0' && is_utf8_continuation(s[2]) &&
+            s[3] != '\0' && is_utf8_continuation(s[3])) return 4u;
+        return 0u;
+    }
+
+    return 0u;
+}
+
 static void print_json_string(FILE *stream, const char *s) {
+    const unsigned char *p = (const unsigned char *)s;
+
     fputc('"', stream);
-    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+    while (*p) {
         unsigned char c = *p;
-        if (c == '"') fputs("\\\"", stream);
-        else if (c == '\\') fputs("\\\\", stream);
-        else if (c == '\b') fputs("\\b", stream);
-        else if (c == '\f') fputs("\\f", stream);
-        else if (c == '\n') fputs("\\n", stream);
-        else if (c == '\r') fputs("\\r", stream);
-        else if (c == '\t') fputs("\\t", stream);
-        else if (c < 0x20 || c >= 0x80) fprintf(stream, "\\u%04x", (unsigned int)c);
-        else fputc((int)c, stream);
+        size_t utf8_len;
+
+        if (c == '"') {
+            fputs("\\\"", stream);
+            p++;
+            continue;
+        }
+        if (c == '\\') {
+            fputs("\\\\", stream);
+            p++;
+            continue;
+        }
+        if (c == '\b') {
+            fputs("\\b", stream);
+            p++;
+            continue;
+        }
+        if (c == '\f') {
+            fputs("\\f", stream);
+            p++;
+            continue;
+        }
+        if (c == '\n') {
+            fputs("\\n", stream);
+            p++;
+            continue;
+        }
+        if (c == '\r') {
+            fputs("\\r", stream);
+            p++;
+            continue;
+        }
+        if (c == '\t') {
+            fputs("\\t", stream);
+            p++;
+            continue;
+        }
+        if (c < 0x20u) {
+            fprintf(stream, "\\u%04x", (unsigned int)c);
+            p++;
+            continue;
+        }
+
+        utf8_len = valid_utf8_sequence_length(p);
+        if (utf8_len != 0u) {
+            fwrite(p, 1u, utf8_len, stream);
+            p += utf8_len;
+            continue;
+        }
+
+        fprintf(stream, "\\u%04x", (unsigned int)c);
+        p++;
     }
     fputc('"', stream);
 }
