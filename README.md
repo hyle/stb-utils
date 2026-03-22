@@ -200,7 +200,7 @@ make clean
 Tests live in `tests/test_cli.sh`, `tests/test_atlas.sh`, and `tests/test_img.sh`.
 
 stb headers are vendored in `vendor/stb/` at commit
-[`f1c79c0`](https://github.com/nothings/stb/commit/f1c79c02822848a9bed4315b12c8c8f3761e1296).
+[`e6cd956`](https://github.com/nothings/stb/commit/e6cd9561ea6dae43d41633797745789d142b691e).
 
 ---
 

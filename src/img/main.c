@@ -7,7 +7,6 @@
 #include <string.h>
 
 #include "stb_image.h"
-#include "stb_image_resize2.h"
 #include "stb_image_write.h"
 
 static void print_usage(FILE *stream) {
@@ -101,6 +100,123 @@ static int allocate_image_buffer(int w, int h, int comp, unsigned char **buffer_
 
     *buffer_out = malloc(total_bytes);
     return *buffer_out != NULL;
+}
+
+static double clamp_double(double value, double min_value, double max_value) {
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static unsigned char round_to_u8(double value) {
+    if (value <= 0.0) {
+        return 0;
+    }
+    if (value >= 255.0) {
+        return 255;
+    }
+    return (unsigned char)(value + 0.5);
+}
+
+static int resize_image_bilinear(const unsigned char *src, int src_w, int src_h, int comp,
+                                 unsigned char *dst, int dst_w, int dst_h) {
+    size_t dst_stride;
+
+    if (!src || !dst || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) {
+        return 0;
+    }
+    if (comp < 1 || comp > 4) {
+        return 0;
+    }
+
+    dst_stride = (size_t)dst_w * (size_t)comp;
+    if (src_w == dst_w && src_h == dst_h) {
+        size_t row_bytes = (size_t)src_w * (size_t)comp;
+        for (int y = 0; y < src_h; y++) {
+            memcpy(dst + (size_t)y * dst_stride, src + (size_t)y * row_bytes, row_bytes);
+        }
+        return 1;
+    }
+
+    for (int y = 0; y < dst_h; y++) {
+        double src_y = ((double)y + 0.5) * (double)src_h / (double)dst_h - 0.5;
+        int y0;
+        int y1;
+        double fy;
+
+        src_y = clamp_double(src_y, 0.0, (double)(src_h - 1));
+        y0 = (int)src_y;
+        y1 = y0 + 1;
+        if (y1 >= src_h) {
+            y1 = src_h - 1;
+        }
+        fy = src_y - (double)y0;
+
+        for (int x = 0; x < dst_w; x++) {
+            double src_x = ((double)x + 0.5) * (double)src_w / (double)dst_w - 0.5;
+            int x0;
+            int x1;
+            double fx;
+            double w00, w10, w01, w11;
+            size_t out_index;
+            const unsigned char *p00;
+            const unsigned char *p10;
+            const unsigned char *p01;
+            const unsigned char *p11;
+
+            src_x = clamp_double(src_x, 0.0, (double)(src_w - 1));
+            x0 = (int)src_x;
+            x1 = x0 + 1;
+            if (x1 >= src_w) {
+                x1 = src_w - 1;
+            }
+            fx = src_x - (double)x0;
+
+            w00 = (1.0 - fx) * (1.0 - fy);
+            w10 = fx * (1.0 - fy);
+            w01 = (1.0 - fx) * fy;
+            w11 = fx * fy;
+
+            p00 = src + ((size_t)y0 * (size_t)src_w + (size_t)x0) * (size_t)comp;
+            p10 = src + ((size_t)y0 * (size_t)src_w + (size_t)x1) * (size_t)comp;
+            p01 = src + ((size_t)y1 * (size_t)src_w + (size_t)x0) * (size_t)comp;
+            p11 = src + ((size_t)y1 * (size_t)src_w + (size_t)x1) * (size_t)comp;
+            out_index = (size_t)y * dst_stride + (size_t)x * (size_t)comp;
+
+            if (comp == 2 || comp == 4) {
+                int alpha_index = comp - 1;
+                double alpha = w00 * p00[alpha_index] + w10 * p10[alpha_index]
+                             + w01 * p01[alpha_index] + w11 * p11[alpha_index];
+
+                if (alpha > 0.0) {
+                    for (int c = 0; c < alpha_index; c++) {
+                        double premultiplied =
+                            w00 * (double)p00[c] * (double)p00[alpha_index] +
+                            w10 * (double)p10[c] * (double)p10[alpha_index] +
+                            w01 * (double)p01[c] * (double)p01[alpha_index] +
+                            w11 * (double)p11[c] * (double)p11[alpha_index];
+                        dst[out_index + (size_t)c] = round_to_u8(premultiplied / alpha);
+                    }
+                } else {
+                    for (int c = 0; c < alpha_index; c++) {
+                        dst[out_index + (size_t)c] = 0;
+                    }
+                }
+                dst[out_index + (size_t)alpha_index] = round_to_u8(alpha);
+            } else {
+                for (int c = 0; c < comp; c++) {
+                    double value = w00 * p00[c] + w10 * p10[c] + w01 * p01[c] + w11 * p11[c];
+                    dst[out_index + (size_t)c] = round_to_u8(value);
+                }
+            }
+        }
+    }
+
+    return 1;
 }
 
 static int write_jpeg(const char *path, int w, int h, int comp, const unsigned char *data) {
@@ -293,10 +409,8 @@ int main(int argc, char **argv) {
             stbi_image_free(input_pixels);
             return 1;
         }
-        if (!stbir_resize(input_pixels, input_w, input_h, 0,
-                          output_pixels, output_w, output_h, 0,
-                          (stbir_pixel_layout)comp, STBIR_TYPE_UINT8,
-                          STBIR_EDGE_CLAMP, resize_filter)) {
+        if (!resize_image_bilinear(input_pixels, input_w, input_h, comp,
+                                   output_pixels, output_w, output_h)) {
             fprintf(stderr, "error: resize failed\n");
             free(output_pixels);
             stbi_image_free(input_pixels);
@@ -316,5 +430,11 @@ int main(int argc, char **argv) {
         free(output_pixels);
     }
     stbi_image_free(input_pixels);
+    printf("wrote %s (%dx%d, %d channel%s)\n",
+           output_path,
+           output_w,
+           output_h,
+           comp,
+           comp == 1 ? "" : "s");
     return 0;
 }

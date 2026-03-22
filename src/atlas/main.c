@@ -7,12 +7,153 @@
 #include "stb_rect_pack.h"
 #include "stb_truetype.h"
 
-static int has_ttf_signature(const unsigned char *buf, size_t len) {
+#define FONT_BUFFER_PADDING 1024u
+
+typedef struct {
+    size_t offset;
+    size_t length;
+    int found;
+} sfnt_table;
+
+static uint16_t read_u16be(const unsigned char *buf) {
+    return (uint16_t)(((uint16_t)buf[0] << 8) | (uint16_t)buf[1]);
+}
+
+static uint32_t read_u32be(const unsigned char *buf) {
+    return ((uint32_t)buf[0] << 24) |
+           ((uint32_t)buf[1] << 16) |
+           ((uint32_t)buf[2] << 8) |
+           (uint32_t)buf[3];
+}
+
+static int has_sfnt_signature(const unsigned char *buf, size_t len) {
     if (len < 4) return 0;
-    if (memcmp(buf, "\x00\x01\x00\x00", 4) == 0) return 1; // TrueType
-    if (memcmp(buf, "OTTO", 4) == 0) return 1;             // OpenType/CFF
-    if (memcmp(buf, "true", 4) == 0) return 1;             // Apple TrueType
-    if (memcmp(buf, "typ1", 4) == 0) return 1;             // Type 1 in sfnt wrapper
+    if (memcmp(buf, "\x00\x01\x00\x00", 4) == 0) return 1;
+    if (memcmp(buf, "OTTO", 4) == 0) return 1;
+    if (memcmp(buf, "true", 4) == 0) return 1;
+    if (memcmp(buf, "typ1", 4) == 0) return 1;
+    return 0;
+}
+
+static void record_table(sfnt_table *table, size_t offset, size_t length) {
+    table->found = 1;
+    table->offset = offset;
+    table->length = length;
+}
+
+static int validate_sfnt_font(const unsigned char *buf, size_t len) {
+    sfnt_table cmap = {0, 0, 0};
+    sfnt_table head = {0, 0, 0};
+    sfnt_table hhea = {0, 0, 0};
+    sfnt_table hmtx = {0, 0, 0};
+    sfnt_table maxp = {0, 0, 0};
+    sfnt_table loca = {0, 0, 0};
+    sfnt_table glyf = {0, 0, 0};
+    sfnt_table cff = {0, 0, 0};
+    sfnt_table cff2 = {0, 0, 0};
+    uint16_t num_tables;
+    size_t directory_size;
+    uint16_t num_glyphs;
+    uint16_t num_hmetrics;
+    uint16_t index_to_loc_format;
+
+    if (len < 12 || !has_sfnt_signature(buf, len)) {
+        return 0;
+    }
+
+    num_tables = read_u16be(buf + 4);
+    if (num_tables == 0) {
+        return 0;
+    }
+    if ((size_t)num_tables > (len - 12u) / 16u) {
+        return 0;
+    }
+
+    directory_size = 12u + (size_t)num_tables * 16u;
+    if (directory_size > len) {
+        return 0;
+    }
+
+    for (uint16_t i = 0; i < num_tables; i++) {
+        const unsigned char *record = buf + 12u + (size_t)i * 16u;
+        size_t offset = (size_t)read_u32be(record + 8);
+        size_t length = (size_t)read_u32be(record + 12);
+
+        if (offset > len || length > len - offset) {
+            return 0;
+        }
+
+        if (memcmp(record, "cmap", 4) == 0) record_table(&cmap, offset, length);
+        else if (memcmp(record, "head", 4) == 0) record_table(&head, offset, length);
+        else if (memcmp(record, "hhea", 4) == 0) record_table(&hhea, offset, length);
+        else if (memcmp(record, "hmtx", 4) == 0) record_table(&hmtx, offset, length);
+        else if (memcmp(record, "maxp", 4) == 0) record_table(&maxp, offset, length);
+        else if (memcmp(record, "loca", 4) == 0) record_table(&loca, offset, length);
+        else if (memcmp(record, "glyf", 4) == 0) record_table(&glyf, offset, length);
+        else if (memcmp(record, "CFF ", 4) == 0) record_table(&cff, offset, length);
+        else if (memcmp(record, "CFF2", 4) == 0) record_table(&cff2, offset, length);
+    }
+
+    if (!cmap.found || !head.found || !hhea.found || !hmtx.found || !maxp.found) {
+        return 0;
+    }
+    if (cmap.length < 4u || head.length < 54u || hhea.length < 36u || maxp.length < 6u) {
+        return 0;
+    }
+
+    num_glyphs = read_u16be(buf + maxp.offset + 4u);
+    num_hmetrics = read_u16be(buf + hhea.offset + 34u);
+    index_to_loc_format = read_u16be(buf + head.offset + 50u);
+
+    if (num_glyphs == 0 || num_hmetrics == 0 || num_hmetrics > num_glyphs) {
+        return 0;
+    }
+
+    if (hmtx.length < (size_t)num_hmetrics * 4u + (size_t)(num_glyphs - num_hmetrics) * 2u) {
+        return 0;
+    }
+
+    if (loca.found || glyf.found) {
+        size_t entries = (size_t)num_glyphs + 1u;
+        size_t entry_size;
+        size_t previous = 0;
+
+        if (!loca.found || !glyf.found) {
+            return 0;
+        }
+        if (index_to_loc_format == 0u) {
+            entry_size = 2u;
+        } else if (index_to_loc_format == 1u) {
+            entry_size = 4u;
+        } else {
+            return 0;
+        }
+        if (loca.length < entries * entry_size) {
+            return 0;
+        }
+
+        for (size_t i = 0; i < entries; i++) {
+            size_t glyph_offset;
+            const unsigned char *entry = buf + loca.offset + i * entry_size;
+
+            if (entry_size == 2u) {
+                glyph_offset = (size_t)read_u16be(entry) * 2u;
+            } else {
+                glyph_offset = (size_t)read_u32be(entry);
+            }
+            if (glyph_offset < previous || glyph_offset > glyf.length) {
+                return 0;
+            }
+            previous = glyph_offset;
+        }
+        return 1;
+    }
+
+    if (cff.found || cff2.found) {
+        sfnt_table outlines = cff.found ? cff : cff2;
+        return outlines.length >= 4u;
+    }
+
     return 0;
 }
 
@@ -27,7 +168,7 @@ static void print_json_string(FILE *stream, const char *s) {
         else if (c == '\n') fputs("\\n", stream);
         else if (c == '\r') fputs("\\r", stream);
         else if (c == '\t') fputs("\\t", stream);
-        else if (c < 0x20) fprintf(stream, "\\u%04x", (unsigned int)c);
+        else if (c < 0x20 || c >= 0x80) fprintf(stream, "\\u%04x", (unsigned int)c);
         else fputc((int)c, stream);
     }
     fputc('"', stream);
@@ -50,7 +191,6 @@ int main(int argc, char **argv) {
     const char *out_path = "atlas.png";
     int atlas_w = 512, atlas_h = 512;
 
-    // Arg parsing
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(stdout);
@@ -65,7 +205,6 @@ int main(int argc, char **argv) {
                 font_size_set = 1;
             } else {
                 out_path = argv[i];
-                // don't set font_size_set — a size could still follow
             }
         } else {
             out_path = argv[i];
@@ -78,7 +217,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Read the font file into memory using standard C I/O only.
     FILE *font_file = fopen(font_path, "rb");
     if (!font_file) {
         fprintf(stderr, "error: failed to open %s\n", font_path);
@@ -107,24 +245,36 @@ int main(int argc, char **argv) {
         fclose(font_file);
         return 1;
     }
-    size_t size = (size_t)file_size;
 
-    unsigned char *ttf_buffer = malloc(size);
+    size_t size = (size_t)file_size;
+    if (size > SIZE_MAX - FONT_BUFFER_PADDING) {
+        fprintf(stderr, "error: font file too large: %s\n", font_path);
+        fclose(font_file);
+        return 1;
+    }
+
+    unsigned char *ttf_buffer = calloc(1u, size + FONT_BUFFER_PADDING);
     if (!ttf_buffer || fread(ttf_buffer, 1, size, font_file) != size) {
         fprintf(stderr, "error: failed to read %s\n", font_path);
-        if (ttf_buffer) free(ttf_buffer);
+        free(ttf_buffer);
         fclose(font_file);
         return 1;
     }
     fclose(font_file);
 
-    if (!has_ttf_signature(ttf_buffer, size)) {
-        fprintf(stderr, "error: %s is not a valid TTF/OTF font file\n", font_path);
+    if (!validate_sfnt_font(ttf_buffer, size)) {
+        fprintf(stderr, "error: %s is not a valid or supported TTF/OTF font file\n", font_path);
         free(ttf_buffer);
         return 1;
     }
 
-    // Allocate memory for the output atlas bitmap
+    stbtt_fontinfo font;
+    if (!stbtt_InitFont(&font, ttf_buffer, 0)) {
+        fprintf(stderr, "error: %s is not a valid or supported TTF/OTF font file\n", font_path);
+        free(ttf_buffer);
+        return 1;
+    }
+
     unsigned char *bitmap = calloc((size_t)atlas_w * (size_t)atlas_h, 1);
     if (!bitmap) {
         fprintf(stderr, "error: failed to allocate bitmap\n");
@@ -132,11 +282,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    stbtt_packedchar chardata[96]; // ASCII 32..126 is 95 chars
+    stbtt_packedchar chardata[96];
     memset(chardata, 0, sizeof(chardata));
     stbtt_pack_context pc;
 
-    // Pack the font
     if (!stbtt_PackBegin(&pc, bitmap, atlas_w, atlas_h, 0, 1, NULL)) {
         fprintf(stderr, "error: failed to initialize font packer\n");
         free(bitmap);
@@ -154,7 +303,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Write the PNG image
     if (!stbi_write_png(out_path, atlas_w, atlas_h, 1, bitmap, atlas_w)) {
         fprintf(stderr, "error: failed to write %s\n", out_path);
         free(bitmap);
@@ -162,7 +310,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Write JSON metadata to stdout
     printf("{\n");
     printf("  \"texture\": ");
     print_json_string(stdout, out_path);
