@@ -12,10 +12,12 @@
 
 static void print_usage(FILE *stream) {
     fprintf(stream,
-            "usage: stb-img [input] [output] [--resize WxH]\n"
+            "usage: stb-img [input] [output] [--resize WxH] [--filter name]\n"
             "  input       source image (any stb_image-supported format)\n"
             "  output      output image (.png, .jpg, .jpeg, .bmp, .tga)\n"
-            "  --resize    resize to WxH before writing\n");
+            "  --resize    resize to WxH before writing\n"
+            "  --filter    resize filter (default, point, triangle, mitchell,\n"
+            "              catmullrom, box, cubicbspline); requires --resize\n");
 }
 
 static int parse_dimensions(const char *arg, int *w, int *h) {
@@ -43,6 +45,31 @@ static int ascii_equal_ci(const char *a, const char *b) {
         b++;
     }
     return *a == '\0' && *b == '\0';
+}
+
+static int parse_filter_name(const char *arg, stbir_filter *filter_out) {
+    struct filter_spec {
+        const char *name;
+        stbir_filter filter;
+    };
+    static const struct filter_spec filters[] = {
+        { "default", STBIR_FILTER_DEFAULT },
+        { "point", STBIR_FILTER_POINT_SAMPLE },
+        { "triangle", STBIR_FILTER_TRIANGLE },
+        { "mitchell", STBIR_FILTER_MITCHELL },
+        { "catmullrom", STBIR_FILTER_CATMULLROM },
+        { "box", STBIR_FILTER_BOX },
+        { "cubicbspline", STBIR_FILTER_CUBICBSPLINE },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(filters) / sizeof(filters[0]); i++) {
+        if (ascii_equal_ci(arg, filters[i].name)) {
+            *filter_out = filters[i].filter;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static const char *path_extension(const char *path) {
@@ -86,6 +113,8 @@ static int write_jpeg(const char *path, int w, int h, int comp, const unsigned c
 
     if (comp == 2) {
         size_t pixel_count;
+        size_t i;
+
         if ((size_t)w > SIZE_MAX / (size_t)h) {
             return 0;
         }
@@ -94,8 +123,8 @@ static int write_jpeg(const char *path, int w, int h, int comp, const unsigned c
         if (!converted) {
             return 0;
         }
-        for (size_t i = 0; i < pixel_count; i++) {
-            converted[i] = data[i * 2];
+        for (i = 0; i < pixel_count; i++) {
+            converted[i] = data[i * 2u];
         }
         ok = stbi_write_jpg(path, w, h, 1, converted, 90);
         free(converted);
@@ -104,6 +133,8 @@ static int write_jpeg(const char *path, int w, int h, int comp, const unsigned c
 
     if (comp == 4) {
         size_t pixel_count;
+        size_t i;
+
         if ((size_t)w > SIZE_MAX / (size_t)h) {
             return 0;
         }
@@ -115,7 +146,7 @@ static int write_jpeg(const char *path, int w, int h, int comp, const unsigned c
         if (!converted) {
             return 0;
         }
-        for (size_t i = 0; i < pixel_count; i++) {
+        for (i = 0; i < pixel_count; i++) {
             converted[i * 3u + 0u] = data[i * 4u + 0u];
             converted[i * 3u + 1u] = data[i * 4u + 1u];
             converted[i * 3u + 2u] = data[i * 4u + 2u];
@@ -159,6 +190,8 @@ int main(int argc, char **argv) {
     int resize_w = 0;
     int resize_h = 0;
     int resize_requested = 0;
+    int filter_requested = 0;
+    stbir_filter resize_filter = STBIR_FILTER_DEFAULT;
     unsigned char *input_pixels = NULL;
     unsigned char *output_pixels = NULL;
     int input_w = 0;
@@ -193,6 +226,25 @@ int main(int argc, char **argv) {
             resize_requested = 1;
             continue;
         }
+        if (strcmp(arg, "--filter") == 0 || strncmp(arg, "--filter=", 9) == 0) {
+            const char *value = NULL;
+            if (strcmp(arg, "--filter") == 0) {
+                if (i + 1 >= argc) {
+                    fprintf(stderr, "error: missing value for --filter\n");
+                    print_usage(stderr);
+                    return 1;
+                }
+                value = argv[++i];
+            } else {
+                value = arg + 9;
+            }
+            if (!parse_filter_name(value, &resize_filter)) {
+                fprintf(stderr, "error: invalid --filter value: %s\n", value);
+                return 1;
+            }
+            filter_requested = 1;
+            continue;
+        }
         if (!input_path) {
             input_path = arg;
             continue;
@@ -209,6 +261,10 @@ int main(int argc, char **argv) {
     if (!input_path || !output_path) {
         fprintf(stderr, "error: missing input or output path\n");
         print_usage(stderr);
+        return 1;
+    }
+    if (filter_requested && !resize_requested) {
+        fprintf(stderr, "error: --filter requires --resize\n");
         return 1;
     }
 
@@ -237,9 +293,10 @@ int main(int argc, char **argv) {
             stbi_image_free(input_pixels);
             return 1;
         }
-        if (!stbir_resize_uint8_linear(input_pixels, input_w, input_h, 0,
-                                       output_pixels, output_w, output_h, 0,
-                                       (stbir_pixel_layout)comp)) {
+        if (!stbir_resize(input_pixels, input_w, input_h, 0,
+                          output_pixels, output_w, output_h, 0,
+                          (stbir_pixel_layout)comp, STBIR_TYPE_UINT8,
+                          STBIR_EDGE_CLAMP, resize_filter)) {
             fprintf(stderr, "error: resize failed\n");
             free(output_pixels);
             stbi_image_free(input_pixels);
@@ -259,8 +316,5 @@ int main(int argc, char **argv) {
         free(output_pixels);
     }
     stbi_image_free(input_pixels);
-
-    fprintf(stderr, "wrote %s (%dx%d, %d channel%s)\n",
-            output_path, output_w, output_h, comp, comp == 1 ? "" : "s");
     return 0;
 }
