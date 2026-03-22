@@ -77,6 +77,14 @@ if [ "$SKIP_RESIZE_TEST" -eq 0 ]; then
     FILTER_DIMS=$(hex_bytes "$TMPDIR/filter-point.png" 16 8 || true)
     [ "$FILTER_MAGIC" = "89504e470d0a1a0a" ] && check "filtered resize png magic" "ok" || check "filtered resize png magic" "fail"
     [ "$FILTER_DIMS" = "0000000900000007" ] && check "filtered resize dimensions encoded" "ok" || check "filtered resize dimensions encoded" "fail"
+
+    $BIN "$TMPDIR/source.png" "$TMPDIR/filter-point.bmp" --resize 9x7 --filter point >/dev/null
+    $BIN "$TMPDIR/source.png" "$TMPDIR/filter-triangle.bmp" --resize 9x7 --filter triangle >/dev/null
+    if cmp -s "$TMPDIR/filter-point.bmp" "$TMPDIR/filter-triangle.bmp"; then
+        check "point and triangle filters differ" "fail"
+    else
+        check "point and triangle filters differ" "ok"
+    fi
 else
     echo "SKIP: resize path not exercised in this run"
 fi
